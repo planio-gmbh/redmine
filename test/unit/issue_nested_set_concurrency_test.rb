@@ -37,10 +37,11 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
     end
     User.current = nil
     CustomField.delete_all
+    Issue.delete_all
+    IssueHierarchy.delete_all
   end
 
   def teardown
-    Issue.delete_all
   end
 
   def test_concurrency
@@ -74,9 +75,7 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
       end
     end
     root.reload
-    assert_equal [1, 62], [root.lft, root.rgt]
-    children_bounds = root.children.sort_by(&:lft).map {|c| [c.lft, c.rgt]}.flatten
-    assert_equal (2..61).to_a, children_bounds
+    assert_equal 30, root.descendants.count
   end
 
   def test_concurrent_subtask_removal
@@ -86,7 +85,7 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
         Issue.generate! :parent_issue_id => root.id
       end
       # pick 40 random subtask ids
-      child_ids = Issue.where(root_id: root.id, parent_id: root.id).pluck(:id)
+      child_ids = root.children.pluck(:id)
       ids_to_remove = child_ids.sample(40).shuffle
       ids_to_keep = child_ids - ids_to_remove
       # remove these from the set, using four parallel threads
@@ -108,17 +107,14 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
         thread.join
         assert_nil thread[:exception]
       end
-      assert_equal 20, Issue.where(parent_id: root.id).count
+
       Issue.where(id: ids_to_remove).each do |issue|
         assert_nil issue.parent_id
-        assert_equal issue.id, issue.root_id
-        assert_equal 1, issue.lft
-        assert_equal 2, issue.rgt
+        assert issue.root?
+        assert issue.leaf?
       end
       root.reload
-      assert_equal [1, 42], [root.lft, root.rgt]
-      children_bounds = root.children.sort_by(&:lft).map {|c| [c.lft, c.rgt]}.flatten
-      assert_equal (2..41).to_a, children_bounds
+      assert_equal 20, root.descendants.count
     end
   end
 

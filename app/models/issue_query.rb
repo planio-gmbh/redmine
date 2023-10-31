@@ -26,9 +26,7 @@ class IssueQuery < Query
                     :default_order => 'desc', :caption => '#', :frozen => true),
     QueryColumn.new(:project, :sortable => "#{Project.table_name}.name", :groupable => true),
     QueryColumn.new(:tracker, :sortable => "#{Tracker.table_name}.position", :groupable => true),
-    QueryColumn.new(:parent,
-                    :sortable => ["#{Issue.table_name}.root_id", "#{Issue.table_name}.lft ASC"],
-                    :default_order => 'desc', :caption => :field_parent_issue),
+    QueryColumn.new(:parent, :sortable => "hierarchy.path ASC", :caption => :field_parent_issue),
     QueryAssociationColumn.new(:parent, :subject, :caption => :field_parent_issue_subject),
     QueryColumn.new(:status, :sortable => "#{IssueStatus.table_name}.position", :groupable => true),
     QueryColumn.new(:priority, :sortable => "#{IssuePriority.table_name}.position",
@@ -54,10 +52,9 @@ class IssueQuery < Query
       :sortable =>
         lambda do
           "COALESCE((SELECT SUM(estimated_hours) FROM #{Issue.table_name} subtasks" \
-          " WHERE #{Issue.visible_condition(User.current).gsub(/\bissues\b/, 'subtasks')}" \
-          " AND subtasks.root_id = #{Issue.table_name}.root_id" \
-          " AND subtasks.lft >= #{Issue.table_name}.lft" \
-          " AND subtasks.rgt <= #{Issue.table_name}.rgt), 0)"
+          " INNER JOIN #{IssueHierarchy.table_name} ON #{IssueHierarchy.table_name}.descendant_id = subtasks.id" \
+          " WHERE #{IssueHierarchy.table_name}.ancestor_id = #{Issue.table_name}.id" \
+          " AND #{Issue.visible_condition(User.current).gsub(/\bissues\b/, 'subtasks')}), 0)"
         end,
       :default_order => 'desc'),
     QueryColumn.new(:done_ratio, :sortable => "#{Issue.table_name}.done_ratio", :groupable => true),
@@ -305,9 +302,9 @@ class IssueQuery < Query
 
       subselect = "SELECT SUM(hours) FROM #{TimeEntry.table_name}" +
         " JOIN #{Project.table_name} ON #{Project.table_name}.id = #{TimeEntry.table_name}.project_id" +
-        " JOIN #{Issue.table_name} subtasks ON subtasks.id = #{TimeEntry.table_name}.issue_id" +
+        " JOIN #{IssueHierarchy.table_name} hierarchy ON hierarchy.descendant_id = #{TimeEntry.table_name}.issue_id" +
         " WHERE (#{TimeEntry.visible_condition(User.current)})" +
-        " AND subtasks.root_id = #{Issue.table_name}.root_id AND subtasks.lft >= #{Issue.table_name}.lft AND subtasks.rgt <= #{Issue.table_name}.rgt"
+        " AND hierarchy.ancestor_id = #{Issue.table_name}.id"
 
       @available_columns.insert(
         index + 1,
@@ -659,9 +656,9 @@ class IssueQuery < Query
         "1=0"
       end
     when "~"
-      root_id, lft, rgt = Issue.where(:id => value.first.to_i).pick(:root_id, :lft, :rgt)
-      if root_id && lft && rgt
-        "#{Issue.table_name}.root_id = #{root_id} AND #{Issue.table_name}.lft > #{lft} AND #{Issue.table_name}.rgt < #{rgt}"
+      ids = Issue.find_by_id(value.first.to_i)&.descendant_ids
+      if ids.present?
+        "#{Issue.table_name}.id IN (#{ids.join(",")})"
       else
         "1=0"
       end
@@ -684,16 +681,16 @@ class IssueQuery < Query
         "1=0"
       end
     when "~"
-      root_id, lft, rgt = Issue.where(:id => value.first.to_i).pick(:root_id, :lft, :rgt)
-      if root_id && lft && rgt
-        "#{Issue.table_name}.root_id = #{root_id} AND #{Issue.table_name}.lft < #{lft} AND #{Issue.table_name}.rgt > #{rgt}"
+      ids = Issue.find_by_id(value.first.to_i)&.ancestor_ids
+      if ids.present?
+        "#{Issue.table_name}.id IN (#{ids.join(",")})"
       else
         "1=0"
       end
     when "!*"
-      "#{Issue.table_name}.rgt - #{Issue.table_name}.lft = 1"
+      "NOT EXISTS (SELECT 1 FROM #{Issue.table_name} children WHERE children.parent_id = #{Issue.table_name}.id)"
     when "*"
-      "#{Issue.table_name}.rgt - #{Issue.table_name}.lft > 1"
+      "EXISTS (SELECT 1 FROM #{Issue.table_name} children WHERE children.parent_id = #{Issue.table_name}.id)"
     end
   end
 
@@ -844,6 +841,39 @@ class IssueQuery < Query
     joins = [super]
 
     if order_options
+      if order_options.include?('hierarchy.path')
+        # TODO
+        # - add this same ordering logic to the Issue.descendants / Issue.self_and_descendants scopes because that is
+        # the expected ordering.
+        # - read performance? This will probably tank with large datasets due to the multiple joins / recursive CTE,
+        # compared to the simple select ordering by root, lft
+        # - the CTE would be nicer if it wasnt hidden in the join with a 'select *'. Maybe add 'cte_for_order_statement' to Query?
+        # - what about sqlite, MSSQL?
+        if Redmine::Database.mysql?
+          # this stops to work with IDs > 99999999 due to the 8 digits padding but could, to a degree, be expanded.
+          # GROUP_CONCAT by default is limited to 1024 chars result width, so the sortable depth is limited to 1024/LPAD
+          # apparently Mysql (8+?) does recursive CTE as well. Maybe we can also use a similar array construct as with
+          # psql, to get rid of the LPAD?
+          joins <<
+            "INNER JOIN (" \
+            "  SELECT child.id AS id, GROUP_CONCAT(DISTINCT LPAD(h2.ancestor_id, 8, '0') ORDER BY h2.generations DESC) AS path" \
+            "  FROM issues AS parent" \
+            "  JOIN issue_hierarchies AS h1 on h1.ancestor_id = parent.id" \
+            "  JOIN issues            AS child on h1.descendant_id = child.id" \
+            "  JOIN issue_hierarchies AS h2 on (h1.descendant_id = h2.descendant_id)" \
+            "  GROUP BY h1.descendant_id" \
+            ") hierarchy ON hierarchy.id = #{queried_table_name}.id"
+        elsif Redmine::Database.postgresql?
+          joins <<
+            "INNER JOIN (" \
+            "  WITH RECURSIVE search_tree(id, parent_id, data, path) AS (" \
+            "    SELECT id, parent_id, subject, ARRAY[id] FROM issues where parent_id is null" \
+            "    UNION ALL" \
+            "    SELECT t.id, t.parent_id, t.subject, path || t.id FROM issues t, search_tree st WHERE t.parent_id = st.id" \
+            "  ) SELECT * FROM search_tree" \
+            ") hierarchy ON hierarchy.id = #{queried_table_name}.id"
+        end
+      end
       if order_options.include?('authors')
         joins << "LEFT OUTER JOIN #{User.table_name} authors ON authors.id = #{queried_table_name}.author_id"
       end

@@ -146,7 +146,7 @@ module Redmine
             pdf.SetFontStyle('B', 9)
             pdf.RDMCell(35+155, 5, l(:label_subtask_plural) + ":", "LTR")
             pdf.ln
-            issue_list(issue.descendants.visible.sort_by(&:lft)) do |child, level|
+            issue_list(issue.descendants.visible) do |child, level|
               buf = "#{child.tracker} # #{child.id}: #{child.subject}".
                       truncate(truncate_length)
               level = 10 if level >= 10

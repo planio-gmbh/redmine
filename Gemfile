@@ -33,6 +33,8 @@ gem 'rqrcode'
 gem "html-pipeline", "~> 2.13.2"
 gem "sanitize", "~> 6.0"
 
+gem "closure_tree", "~> 7.4.0"
+
 # Optional gem for LDAP authentication
 group :ldap do
   gem 'net-ldap', '~> 0.17.0'

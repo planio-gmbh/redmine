@@ -22,7 +22,7 @@ class Issue < ActiveRecord::Base
   include Redmine::Utils::DateCalculation
   include Redmine::I18n
   before_save :set_parent_id
-  include Redmine::NestedSet::IssueNestedSet
+  prepend Redmine::NestedSet::IssueClosureTree
 
   belongs_to :project
   belongs_to :tracker
@@ -1215,9 +1215,8 @@ class Issue < ActiveRecord::Base
   def self.load_visible_total_spent_hours(issues, user=User.current)
     if issues.any?
       hours_by_issue_id = TimeEntry.visible(user).joins(:issue).
-        joins("JOIN #{Issue.table_name} parent ON parent.root_id = #{Issue.table_name}.root_id" +
-          " AND parent.lft <= #{Issue.table_name}.lft AND parent.rgt >= #{Issue.table_name}.rgt").
-        where("parent.id IN (?)", issues.map(&:id)).group("parent.id").sum(:hours)
+        joins("JOIN #{IssueHierarchy.table_name} hierarchy ON hierarchy.descendant_id = #{Issue.table_name}.id").
+        where(hierarchy: {ancestor_id: issues.map(&:id)}).group("hierarchy.ancestor_id").sum(:hours)
       issues.each do |issue|
         issue.instance_variable_set :@total_spent_hours, (hours_by_issue_id[issue.id] || 0.0)
       end
@@ -1247,12 +1246,8 @@ class Issue < ActiveRecord::Base
 
   # Returns a scope of the given issues and their descendants
   def self.self_and_descendants(issues)
-    Issue.joins(
-      "JOIN #{Issue.table_name} ancestors" +
-      " ON ancestors.root_id = #{Issue.table_name}.root_id" +
-      " AND ancestors.lft <= #{Issue.table_name}.lft AND ancestors.rgt >= #{Issue.table_name}.rgt"
-    ).
-      where(:ancestors => {:id => issues.map(&:id)})
+    Issue.joins("JOIN #{IssueHierarchy.table_name} hierarchy ON hierarchy.descendant_id = #{Issue.table_name}.id").
+      where(hierarchy: {ancestor_id: issues.map(&:id)})
   end
 
   # Preloads users who updated last a collection of issues
@@ -1440,8 +1435,11 @@ class Issue < ActiveRecord::Base
 
     if root_id != issue.root_id
       (root_id || 0) <=> (issue.root_id || 0)
+    elsif root = Issue.find_by_id(root_id)
+      order = root.self_and_descendants.where(id: [id, issue.id].compact).pluck(:id)
+      order.index(id) <=> order.index(issue.id)
     else
-      (lft || 0) <=> (issue.lft || 0)
+      (id || 0) <=> (issue.id || 0)
     end
   end
 
@@ -1751,7 +1749,7 @@ class Issue < ActiveRecord::Base
     unless @copied_from.leaf? || @copy_options[:subtasks] == false
       copy_options = (@copy_options || {}).merge(:subtasks => false)
       copied_issue_ids = {@copied_from.id => self.id}
-      @copied_from.reload.descendants.reorder("#{Issue.table_name}.lft").each do |child|
+      @copied_from.reload.descendants.each do |child|
         # Do not copy self when copying an issue as a descendant of the copied issue
         next if child == self
         # Do not copy subtasks of issues that were not copied
@@ -1818,6 +1816,8 @@ class Issue < ActiveRecord::Base
   end
 
   def update_parent_attributes
+    return if @without_descendants
+
     if parent_id
       recalculate_attributes_for(parent_id)
       association(:parent).reset
@@ -2016,7 +2016,7 @@ class Issue < ActiveRecord::Base
 
   def create_parent_issue_journal
     return if persisted? && !saved_change_to_parent_id?
-    return if destroyed? && @without_nested_set_update
+    return if destroyed? && @without_descendants
 
     child_id = self.id
     old_parent_id, new_parent_id =

@@ -195,7 +195,7 @@ class ProjectCopyTest < ActiveSupport::TestCase
       assert_equal 1, copied_issue.relations.size, "Relation not copied"
       copied_relation = copied_issue.relations.first
       assert_equal "relates", copied_relation.relation_type
-      assert_equal copied_second_issue.id, copied_relation.issue_to_id
+      assert_equal [copied_second_issue.id, copied_issue.id].sort, [copied_relation.issue_from_id, copied_relation.issue_to_id]
       assert_not_equal source_relation.id, copied_relation.id
 
       # Second issue with a cross project relation

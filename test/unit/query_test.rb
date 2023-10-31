@@ -518,6 +518,7 @@ class QueryTest < ActiveSupport::TestCase
   end
 
   def test_time_entry_contains_operator_is_on_issue_parent_id
+    Issue.rebuild!
     issue1 = Issue.generate!(project_id: 'ecookbook', parent_id: 2)
     entry1 = TimeEntry.generate!(issue: issue1)
     issue2 = Issue.generate!(project_id: 'ecookbook', parent_id: issue1.id)
@@ -2302,6 +2303,7 @@ class QueryTest < ActiveSupport::TestCase
 
   def test_sort_by_total_for_estimated_hours
     # Prepare issues
+    Issue.rebuild!
     parent = issues(:issues_001)
     child = issues(:issues_002)
     private_child = issues(:issues_003)

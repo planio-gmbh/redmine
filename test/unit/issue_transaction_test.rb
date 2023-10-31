@@ -42,7 +42,15 @@ class IssueTransactionTest < ActiveSupport::TestCase
     grandchild = Issue.generate!(:parent_issue_id => child.id, :tracker_id => 2)
     Project.find(2).tracker_ids = [1]
     parent1.reload
-    assert_equal [1, parent1.id, lft1, lft1 + 5], [parent1.project_id, parent1.root_id, parent1.lft, parent1.rgt]
+    assert_equal 1, parent1.project_id
+    assert parent1.root?
+    assert grandchild.leaf?
+    assert_equal 2, parent1.descendants.size
+    assert_equal [child], parent1.children
+    assert_equal [grandchild], child.children
+    assert_equal 1, child.project_id
+    assert_equal 1, grandchild.project_id
+
     # child can not be moved to Project 2 because its child is on a disabled tracker
     child = Issue.find(child.id)
     child.project = Project.find(2)
@@ -51,8 +59,13 @@ class IssueTransactionTest < ActiveSupport::TestCase
     grandchild.reload
     parent1.reload
     # no change
-    assert_equal [1, parent1.id, lft1,     lft1 + 5], [parent1.project_id, parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [1, parent1.id, lft1 + 1, lft1 + 4], [child.project_id, child.root_id, child.lft, child.rgt]
-    assert_equal [1, parent1.id, lft1 + 2, lft1 + 3], [grandchild.project_id, grandchild.root_id, grandchild.lft, grandchild.rgt]
+    assert_equal 1, parent1.project_id
+    assert parent1.root?
+    assert grandchild.leaf?
+    assert_equal 2, parent1.descendants.size
+    assert_equal [child], parent1.children
+    assert_equal [grandchild], child.children
+    assert_equal 1, child.project_id
+    assert_equal 1, grandchild.project_id
   end
 end

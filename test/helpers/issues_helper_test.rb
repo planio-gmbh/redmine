@@ -36,6 +36,10 @@ class IssuesHelperTest < Redmine::HelperTest
            :attachments,
            :versions, :workflows
 
+  setup do
+    Issue.rebuild!
+  end
+
   def test_issue_heading
     assert_equal "Bug #1", issue_heading(Issue.find(1))
   end

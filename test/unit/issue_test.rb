@@ -1521,7 +1521,7 @@ class IssueTest < ActiveSupport::TestCase
       assert copy.save
     end
 
-    assert_equal [3, nil], copy.children.map(&:fixed_version_id)
+    assert_equal [3, nil], copy.children.order(:id).map(&:fixed_version_id)
   end
 
   def test_copy_should_clear_subtasks_assignee_if_is_locked
@@ -1540,7 +1540,7 @@ class IssueTest < ActiveSupport::TestCase
       assert copy.save
     end
 
-    assert_equal [3, nil], copy.children.map(&:assigned_to_id)
+    assert_equal [3, nil], copy.children.order(:id).map(&:assigned_to_id)
   end
 
   def test_copy_should_not_add_attachments_to_journal

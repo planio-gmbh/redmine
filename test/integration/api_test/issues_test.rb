@@ -47,6 +47,10 @@ class Redmine::ApiTest::IssuesTest < Redmine::ApiTest::Base
     :queries,
     :attachments)
 
+  setup do
+    Issue.rebuild!
+  end
+
   test "GET /issues.xml should contain metadata" do
     get '/issues.xml'
     assert_select 'issues[type=array][total_count][limit="25"][offset="0"]'

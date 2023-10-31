@@ -63,6 +63,10 @@ class ActiveSupport::TestCase
     fixture_file_upload(name.to_s, mime, true)
   end
 
+  setup do
+    Issue.rebuild!
+  end
+
   def mock_file(options=nil)
     options ||=
       {

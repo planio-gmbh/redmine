@@ -31,7 +31,7 @@ class TimeEntryQuery < Query
     QueryColumn.new(:activity, :sortable => "#{TimeEntryActivity.table_name}.position", :groupable => true),
     QueryColumn.new(:issue, :sortable => "#{Issue.table_name}.id", :groupable => true),
     QueryAssociationColumn.new(:issue, :tracker, :caption => :field_tracker, :sortable => "#{Tracker.table_name}.position"),
-    QueryAssociationColumn.new(:issue, :parent, :caption => :field_parent_issue, :sortable => ["#{Issue.table_name}.root_id", "#{Issue.table_name}.lft ASC"], :default_order => 'desc'),
+    QueryAssociationColumn.new(:issue, :parent, :caption => :field_parent_issue, :sortable => "#{Issue.table_name}.parent_id"),
     QueryAssociationColumn.new(:issue, :status, :caption => :field_status, :sortable => "#{IssueStatus.table_name}.position"),
     QueryAssociationColumn.new(:issue, :category, :caption => :field_category, :sortable => "#{IssueCategory.table_name}.name"),
     QueryAssociationColumn.new(:issue, :fixed_version, :caption => :field_fixed_version, :sortable => Version.fields_for_order_statement),
@@ -222,8 +222,7 @@ class TimeEntryQuery < Query
         "1=0"
       end
     when "~"
-      root_id, lft, rgt = Issue.where(:id => value.first.to_i).pick(:root_id, :lft, :rgt)
-      issue_ids = Issue.where("#{Issue.table_name}.root_id = ? AND #{Issue.table_name}.lft > ? AND #{Issue.table_name}.rgt < ?", root_id, lft, rgt).pluck(:id) if root_id && lft && rgt
+      issue_ids = Issue.find_by_id(value.first.to_i)&.descendant_ids
       if issue_ids.present?
         "#{TimeEntry.table_name}.issue_id IN (#{issue_ids.join(',')})"
       else

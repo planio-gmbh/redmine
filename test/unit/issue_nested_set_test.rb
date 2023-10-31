@@ -24,7 +24,7 @@ class IssueNestedSetTest < ActiveSupport::TestCase
            :trackers, :projects_trackers,
            :issue_statuses, :issue_categories, :issue_relations,
            :enumerations,
-           :issues
+           :issues, :journals, :journal_details
 
   def setup
     User.current = nil
@@ -36,18 +36,17 @@ class IssueNestedSetTest < ActiveSupport::TestCase
   end
 
   def test_create_root_issue
-    lft1 = new_issue_lft
     issue1 = Issue.generate!
-    lft2 = new_issue_lft
+    assert issue1.root?
+    assert issue1.leaf?
+    assert_nil issue1.parent
     issue2 = Issue.generate!
-    issue1.reload
-    issue2.reload
-    assert_equal [issue1.id, nil, lft1, lft1 + 1], [issue1.root_id, issue1.parent_id, issue1.lft, issue1.rgt]
-    assert_equal [issue2.id, nil, lft2, lft2 + 1], [issue2.root_id, issue2.parent_id, issue2.lft, issue2.rgt]
+    assert issue2.root?
+    assert issue2.leaf?
+    assert_nil issue2.parent
   end
 
   def test_create_child_issue
-    lft = new_issue_lft
     parent = Issue.generate!
     child = nil
     assert_difference 'Journal.count', 1 do
@@ -55,8 +54,9 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     end
     parent.reload
     child.reload
-    assert_equal [parent.id, nil,       lft,     lft + 3], [parent.root_id, parent.parent_id, parent.lft, parent.rgt]
-    assert_equal [parent.id, parent.id, lft + 1, lft + 2], [child.root_id, child.parent_id, child.lft, child.rgt]
+    assert !child.root?
+    assert parent == child.root
+    assert [child], parent.children
   end
 
   def test_creating_a_child_in_a_subproject_should_validate
@@ -94,17 +94,15 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     child.reload
     parent1.reload
     parent2.reload
-    assert_equal [parent1.id, lft,     lft + 5], [parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [parent1.id, lft + 1, lft + 2], [parent2.root_id, parent2.lft, parent2.rgt]
-    assert_equal [parent1.id, lft + 3, lft + 4], [child.root_id, child.lft, child.rgt]
+    assert parent1.children.include?(parent2)
+    assert parent1.children.include?(child)
+    assert parent2.leaf?
+    assert child.leaf?
   end
 
   def test_move_a_child_to_root
-    lft1 = new_issue_lft
     parent1 = Issue.generate!
-    lft2 = new_issue_lft
     parent2 = Issue.generate!
-    lft3 = new_issue_lft
     child = parent1.generate_child!
     assert_difference 'Journal.count', 2 do
       child.init_journal(User.find(2))
@@ -114,9 +112,13 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     child.reload
     parent1.reload
     parent2.reload
-    assert_equal [parent1.id, lft1, lft1 + 1], [parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [parent2.id, lft2, lft2 + 1], [parent2.root_id, parent2.lft, parent2.rgt]
-    assert_equal [child.id,   lft3, lft3 + 1], [child.root_id, child.lft, child.rgt]
+
+    assert parent1.root?
+    assert parent1.leaf?
+    assert parent2.root?
+    assert parent2.leaf?
+    assert child.root?
+    assert child.leaf?
   end
 
   def test_move_a_child_to_another_issue
@@ -133,9 +135,8 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     child.reload
     parent1.reload
     parent2.reload
-    assert_equal [parent1.id, lft1,     lft1 + 1], [parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [parent2.id, lft2,     lft2 + 3], [parent2.root_id, parent2.lft, parent2.rgt]
-    assert_equal [parent2.id, lft2 + 1, lft2 + 2], [child.root_id,   child.lft,   child.rgt]
+    assert parent2.children.include?(child)
+    assert !parent1.children.include?(child)
   end
 
   def test_move_a_child_with_descendants_to_another_issue
@@ -149,20 +150,22 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     parent2.reload
     child.reload
     grandchild.reload
-    assert_equal [parent1.id, lft1,     lft1 + 5], [parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [parent2.id, lft2,     lft2 + 1], [parent2.root_id, parent2.lft, parent2.rgt]
-    assert_equal [parent1.id, lft1 + 1, lft1 + 4], [child.root_id, child.lft, child.rgt]
-    assert_equal [parent1.id, lft1 + 2, lft1 + 3], [grandchild.root_id, grandchild.lft, grandchild.rgt]
+    assert_equal parent1, child.parent
+    assert_equal parent1, child.root
+    assert_equal child, grandchild.parent
+    assert_equal parent1, grandchild.root
+    assert_equal [child, grandchild].map(&:id).sort, parent1.descendants.map(&:id).sort
     child.reload.parent_issue_id = parent2.id
     child.save!
     child.reload
     grandchild.reload
     parent1.reload
     parent2.reload
-    assert_equal [parent1.id, lft1,     lft1 + 1], [parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [parent2.id, lft2,     lft2 + 5], [parent2.root_id, parent2.lft, parent2.rgt]
-    assert_equal [parent2.id, lft2 + 1, lft2 + 4], [child.root_id, child.lft, child.rgt]
-    assert_equal [parent2.id, lft2 + 2, lft2 + 3], [grandchild.root_id, grandchild.lft, grandchild.rgt]
+    assert_equal parent2, child.parent
+    assert_equal parent2, child.root
+    assert_equal child, grandchild.parent
+    assert_equal parent2, grandchild.root
+    assert_equal [child, grandchild].map(&:id).sort, parent2.descendants.map(&:id).sort
   end
 
   def test_move_a_child_with_descendants_to_another_project
@@ -182,11 +185,13 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     child.reload
     grandchild.reload
     parent1.reload
-    assert_equal [1, parent1.id, lft1, lft1 + 1], [parent1.project_id, parent1.root_id, parent1.lft, parent1.rgt]
-    assert_equal [2, child.id, lft4, lft4 + 3],
-                 [child.project_id, child.root_id, child.lft, child.rgt]
-    assert_equal [2, child.id, lft4 + 1, lft4 + 2],
-                 [grandchild.project_id, grandchild.root_id, grandchild.lft, grandchild.rgt]
+    assert_equal 1, parent1.project_id
+    assert parent1.root?
+    assert parent1.leaf?
+    assert_equal 2, child.project_id
+    assert child.root?
+    assert_equal child, grandchild.parent
+    assert grandchild.leaf?
   end
 
   def test_moving_an_issue_to_a_descendant_should_not_validate
@@ -259,8 +264,6 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     issue4.reload
     assert !Issue.exists?(issue2.id)
     assert !Issue.exists?(issue3.id)
-    assert_equal [issue1.id, lft1,     lft1 + 3], [issue1.root_id, issue1.lft, issue1.rgt]
-    assert_equal [issue1.id, lft1 + 1, lft1 + 2], [issue4.root_id, issue4.lft, issue4.rgt]
   end
 
   def test_destroy_child_should_update_parent
@@ -269,12 +272,12 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     child1 = issue.generate_child!
     child2 = issue.generate_child!
     issue.reload
-    assert_equal [issue.id, lft1, lft1 + 5], [issue.root_id, issue.lft, issue.rgt]
+    assert_equal 2, issue.children.size
     assert_difference 'Journal.count', 1 do
       child2.reload.destroy
     end
     issue.reload
-    assert_equal [issue.id, lft1, lft1 + 3], [issue.root_id, issue.lft, issue.rgt]
+    assert_equal 1, issue.children.size
   end
 
   def test_destroy_parent_issue_updated_during_children_destroy
@@ -306,7 +309,7 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     end
 
     root = Issue.find(root.id)
-    assert root.leaf?, "Root issue is not a leaf (lft: #{root.lft}, rgt: #{root.rgt})"
+    assert root.leaf?, "Root issue is not a leaf (#{root.inspect})"
   end
 
   def test_destroy_issue_with_grand_child
@@ -321,7 +324,8 @@ class IssueNestedSetTest < ActiveSupport::TestCase
         Issue.find(issue.id).destroy
       end
       parent.reload
-      assert_equal [lft1, lft1 + 1], [parent.lft, parent.rgt]
+      assert parent.leaf?
+      assert parent.children.empty?
     end
   end
 
@@ -345,22 +349,32 @@ class IssueNestedSetTest < ActiveSupport::TestCase
     assert ic5.root?
   end
 
-  def test_rebuild_single_tree
+  def test_ordering_should_be_consistent
+    Issue.delete_all
+    i1 = Issue.generate!(:subject => '1')
+    i5 = Issue.generate!(:subject => '2')
+    i2 = i1.generate_child!(:subject => '1-1')
+    i3 = i2.generate_child!(:subject => '1-1-1')
+    i4 = i1.generate_child!(:subject => '1-2')
+
+    assert_equal [i1, i2, i4, i3], i1.self_and_descendants
+    assert_equal [i1, i2, i4, i3, i5], [i1, i2, i4, i3, i5].shuffle.sort
+  end
+
+  def test_rebuild
     i1 = Issue.generate!
     i2 = i1.generate_child!
     i3 = i1.generate_child!
-    Issue.update_all(:lft => 7, :rgt => 7)
+    IssueHierarchy.delete_all
 
-    Issue.rebuild_single_tree!(i1.id)
+    Issue.rebuild!
 
     i1.reload
-    assert_equal [1, 6], [i1.lft, i1.rgt]
     i2.reload
-    assert_equal [2, 3], [i2.lft, i2.rgt]
     i3.reload
-    assert_equal [4, 5], [i3.lft, i3.rgt]
-
-    other = Issue.find(1)
-    assert_equal [7, 7], [other.lft, other.rgt]
+    assert_equal 2, i1.descendants.count
+    assert_equal 2, i1.children.count
+    assert_equal i1, i2.parent
+    assert_equal i1, i3.parent
   end
 end

@@ -52,6 +52,7 @@ class IssuesControllerTest < Redmine::ControllerTest
 
   def setup
     User.current = nil
+    Issue.rebuild!
   end
 
   def test_index

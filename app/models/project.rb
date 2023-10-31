@@ -1132,9 +1132,9 @@ class Project < ActiveRecord::Base
       version.update_attribute :status, 'open'
     end
 
-    # Get issues sorted by root_id, lft so that parent issues
-    # get copied before their children
-    project.issues.reorder('root_id, lft').each do |issue|
+    # Process issue trees from top down so that parents get copied before their children
+    project.issues.roots.find_each do |root|
+      root.self_and_descendants.each do |issue|
       new_issue = Issue.new
       new_issue.copy_from(issue, :subtasks => false, :link => false, :keep_status => true)
       new_issue.project = self
@@ -1185,6 +1185,7 @@ class Project < ActiveRecord::Base
         end
       else
         issues_map[issue.id] = new_issue unless new_issue.new_record?
+      end
       end
     end
 
